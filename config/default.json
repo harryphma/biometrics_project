@@ -1,0 +1,26 @@
+{
+  "face_manifest": "data/sof_manifest.csv",
+  "cmu_csv": "data/DSL-StrongPasswordData.csv",
+  "output": "results",
+  "seeds": [42, 43, 44],
+  "n_users": 12,
+  "max_pairs_per_user": 30,
+  "target_far": 0.01,
+  "fixed_face_weights": [0.25, 0.5, 0.75],
+  "adaptive_powers": [0.5, 1.0, 2.0, 4.0],
+  "timing_noise_ms": [0, 10, 30],
+  "num_thresholds": 500,
+  "plots": true,
+  "models": [
+    {"kind": "logistic", "C": 0.1},
+    {"kind": "logistic", "C": 1.0},
+    {"kind": "logistic", "C": 10.0},
+    {"kind": "svm", "C": 0.1, "gamma": "scale"},
+    {"kind": "svm", "C": 1.0, "gamma": "scale"},
+    {"kind": "svm", "C": 10.0, "gamma": "scale"},
+    {"kind": "svm", "C": 1.0, "gamma": 0.01},
+    {"kind": "knn", "k": 3, "weights": "uniform"},
+    {"kind": "knn", "k": 5, "weights": "distance"},
+    {"kind": "knn", "k": 9, "weights": "distance"}
+  ]
+}
