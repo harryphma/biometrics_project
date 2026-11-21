@@ -4,6 +4,26 @@ Runnable experiments for SoF + CMU, implementing RQ1, RQ2, and RQ3.
 The code uses actual original face images and the official CMU timing CSV.
 No pretrained network, GPU, external service, or extra biometric dataset is required.
 
+## Latest results
+
+The full experiment completed for seeds 42, 43, and 44. All three runs
+selected logistic regression (`C=1.0`) for face verification and
+distance-weighted kNN (`k=9`) for keystroke verification by validation EER.
+The 50:50 face-to-keystroke weight also won on validation in all three runs.
+On the paired RQ2 test trials, mean EER across the three seeds was **7.74%**
+for 50:50 fusion, **16.78%** for face only, and **11.50%** for keystroke only.
+
+For the report and presentation, start with
+`results/summary_across_mappings.csv` for averages across seeds and
+`results/all_metrics.csv` for per-seed metrics. The `results/seed_*/` folders
+contain model and fusion selections, split counts, and plots. Git ignores
+these generated files. Use the team’s shared Google Drive folder for copies
+of the results or regenerate them using the steps below.
+
+For RQ3, report actual test FAR alongside test FRR for each lighting and
+timing-noise condition. Each method’s threshold was calibrated to a 1% FAR
+target on the validation set and held fixed across test conditions.
+
 ## Start here
 
 The datasets are downloaded and extracted manually. The project does not need
