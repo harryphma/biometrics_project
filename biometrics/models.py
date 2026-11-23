@@ -1,4 +1,4 @@
-"""Binary one-vs-rest verification models with explicit claimed-user scores."""
+"""Per-user verification models, score normalization, and quality-based fusion weights."""
 
 import json
 import numpy as np
@@ -10,15 +10,19 @@ from sklearn.svm import SVC
 
 
 def model_name(spec):
+    """Build a deterministic model identifier from sorted configuration fields."""
     return "_".join(f"{k}-{v}" for k, v in sorted(spec.items()))
 
 
 class Verifier:
+    """Train one genuine-versus-other-user classifier for each enrolled identity."""
     def __init__(self, spec, seed=42):
+        """Store the classifier specification and reproducibility seed."""
         self.spec = spec
         self.seed = seed
 
     def fit(self, X, y):
+        """Fit the training scaler and one binary classifier per enrolled user."""
         self.scaler = StandardScaler().fit(X)
         Z = self.scaler.transform(X)
         self.users = np.unique(y)
@@ -53,6 +57,7 @@ class Verifier:
         return self
 
     def raw_scores(self, X):
+        """Return a sample-by-user matrix of margins or genuine-class probabilities."""
         Z = self.scaler.transform(X)
         result = []
         for m in self.models:
@@ -64,22 +69,25 @@ class Verifier:
         return np.column_stack(result)
 
     def calibrate(self, X):
-        # Label-free per-claimed-user score standardization, fitted on validation ONLY.
+        # Per-user score means and standard deviations are estimated from validation features.
+        """Fit per-user score normalization parameters from validation features."""
         R = self.raw_scores(X)
         self.location = R.mean(axis=0)
         self.scale = np.maximum(R.std(axis=0), 1e-6)
         return self
 
     def scores(self, X):
-        # Logistic squashing after z-normalization: continuous comparable similarity scales.
-        # This is score normalization, not an estimate of posterior match probability.
+        # A sigmoid maps standardized scores to [0, 1] for score-level fusion.
+        # These similarities are not calibrated identity probabilities.
+        """Return normalized similarities with columns ordered by enrolled user ID."""
         return expit((self.raw_scores(X) - self.location) / self.scale)
 
 
 class QualityEstimator:
-    """Observable quality proxies; no illumination labels or injected noise level."""
+    """Estimate modality quality from training references and observable sample features."""
 
     def fit(self, face_quality, key_X):
+        """Fit face-quality percentiles and robust keystroke references from training samples."""
         self.face_ref = np.sort(face_quality)
         self.key_center = np.median(key_X, axis=0)
         self.key_scale = np.maximum(
@@ -88,6 +96,7 @@ class QualityEstimator:
         return self
 
     def face(self, raw):
+        """Map image-quality values to training-reference percentiles bounded to [0.05, 1]."""
         return np.clip(
             np.searchsorted(self.face_ref, raw, side="right") / len(self.face_ref),
             0.05,
@@ -95,13 +104,15 @@ class QualityEstimator:
         )
 
     def key(self, X):
+        """Convert robust timing deviations into quality scores bounded to [0.05, 1]."""
         z = np.abs((X - self.key_center) / self.key_scale)
-        # High population timing outliers -> lower quality, a heuristic rather than
-        # a validated measurement of emotion, fatigue, or timestamp reliability.
+        # Large timing deviations reduce this heuristic quality score.
+        # The score does not measure emotion, fatigue, or timestamp reliability.
         return np.clip(np.exp(-np.quantile(z, 0.9, axis=1) / 3), 0.05, 1)
 
 
 def adaptive_weight(qface, qkey, prior, power):
+    """Normalize quality-adjusted modality weights and return the face contribution."""
     a = prior * np.asarray(qface) ** power
     b = (1 - prior) * np.asarray(qkey) ** power
     return a / np.maximum(a + b, 1e-12)

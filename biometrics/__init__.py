@@ -1,1 +1,1 @@
-"""Reproducible face + keystroke verification experiments."""
+"""Face and keystroke verification with reproducible identity mappings and evaluation."""

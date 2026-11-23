@@ -1,4 +1,4 @@
-"""Use the existing HW3 Evaluator"""
+"""HW3 evaluation adapter with validation threshold selection and fixed-threshold metrics."""
 
 from pathlib import Path
 import os
@@ -11,6 +11,7 @@ from vendor.hw3_original import Evaluator
 
 
 def evaluator(y, s, title="", num_thresholds=500):
+    """Validate trial labels and scores, then construct the bundled HW3 evaluator."""
     y = np.asarray(y)
     s = np.asarray(s, float)
     if set(np.unique(y)) != {0, 1}:
@@ -21,16 +22,19 @@ def evaluator(y, s, title="", num_thresholds=500):
 
 
 def eer(y, s, num_thresholds=500):
+    """Return the HW3 finite-grid EER approximation and its corresponding threshold."""
     e = evaluator(y, s, num_thresholds=num_thresholds)
     far, frr, _ = e.compute_rates()
     return tuple(map(float, e.get_EER(far, frr)))
 
 
 def far_threshold(y, s, target):
-    """Lowest validation threshold achieving empirical FAR <= target; ties handled.
+    """Select a validation threshold whose empirical FAR does not exceed target.
 
-    Accept iff score >= threshold. Can reject all if a low target is unresolved.
-    Never estimate this operational threshold from test observations.
+    Acceptance requires score >= threshold. The threshold is the next floating-point
+    value above the first disallowed impostor score, so tied scores are rejected
+    together. A target below the available resolution may reject every attempt.
+    The experiment driver supplies validation scores for this calculation.
     """
     if not 0 <= target < 1:
         raise ValueError("target FAR must be in [0,1)")
@@ -42,6 +46,7 @@ def far_threshold(y, s, target):
 
 
 def rates_at(y, s, t):
+    """Compute confusion counts and error rates at a supplied acceptance threshold."""
     y = np.asarray(y)
     accept = np.asarray(s) >= t
     tp = int(np.sum(accept & (y == 1)))
@@ -64,6 +69,12 @@ def rates_at(y, s, t):
 
 
 def measure(y, s, thresholds, num_thresholds=500):
+    """Combine HW3 curve metrics with error rates at supplied operating thresholds.
+
+    EER and d-prime come from the HW3 evaluator. Fixed-threshold metrics are
+    computed separately by rates_at; the experiment driver supplies thresholds
+    calibrated on validation data.
+    """
     e = evaluator(y, s, num_thresholds=num_thresholds)
     far, frr, tpr = e.compute_rates()
     v, t = e.get_EER(far, frr)
@@ -83,7 +94,7 @@ def measure(y, s, thresholds, num_thresholds=500):
 
 
 def plot_hw3(y, s, title, directory, num_thresholds=500):
-    """Call the HW3 plotting functions with real experimental scores."""
+    """Save HW3 score-distribution, DET, and ROC plots for the supplied trial scores."""
     p = Path(directory).resolve()
     p.mkdir(parents=True, exist_ok=True)
     e = evaluator(y, s, title, num_thresholds)

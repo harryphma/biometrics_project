@@ -1,4 +1,4 @@
-"""Real dataset loading and audited identity/split handling"""
+"""Dataset loading, feature extraction, identity mapping, and sample partitioning."""
 
 from pathlib import Path
 import hashlib
@@ -14,10 +14,11 @@ SPLITS = ("train", "validation", "test")
 
 
 def face_representation(image):
-    """64x64 grayscale crop -> 16x16 low-frequency orthonormal DCT (256 values).
+    """Return 256 DCT coefficients and an image-derived quality score for a face crop.
 
-    Fixed transform, no learned preprocessing. Intensity retained so illumination
-    remains a measurable condition. Exposure quality is observable, not a label.
+    The crop is converted to 64 by 64 grayscale pixels and scaled to [0, 1].
+    The top-left 16 by 16 orthonormal DCT coefficients form the feature vector.
+    This fixed transform retains intensity information for illumination analysis.
     """
     a = (
         np.asarray(
@@ -26,7 +27,7 @@ def face_representation(image):
         / 255
     )
     features = dctn(a, norm="ortho")[:16, :16].ravel()
-    # Penalize under/overexposure, low contrast, and strong side-light imbalance.
+    # Image quality combines exposure, contrast, unclipped pixels, and side-to-side balance.
     exposure = np.exp(-(((a.mean() - 0.5) / 0.3) ** 2))
     contrast = min(a.std() / 0.18, 1.0)
     unclipped = np.mean((a > 0.03) & (a < 0.97))
@@ -36,11 +37,14 @@ def face_representation(image):
 
 
 def prepare_sof(image_root, metadata_mat, out, seed=42, gap=1, part="2"):
-    """Read actual SoF MATLAB structs. Only original *_o.jpg images are accepted.
+    """Build a partitioned SoF manifest from metadata and original image files.
 
-    Each identity/illumination stratum is ordered by imageSequence; allocate
-    50/25/25 percent, purging `gap` last frames from train and validation.
-    This is a within-collection split, NOT independent recording sessions.
+    Images with stems ending in '_o' are matched by user ID and image sequence
+    within the requested dataset part. Each user and illumination group is
+    ordered by sequence and divided approximately 50/25/25 into training,
+    validation, and test samples. Boundary frames and cross-partition sequence
+    neighbors are removed according to gap. These partitions share a collection
+    and do not represent independent recording sessions.
     """
     if gap < 1:
         raise ValueError("Use a sequence gap of at least one original image")
@@ -68,14 +72,14 @@ def prepare_sof(image_root, metadata_mat, out, seed=42, gap=1, part="2"):
             missing.append(key)
             continue
         p = files[key]
-        # Hash decoded pixels: catches renamed originals and recompression-free copies.
+        # Decoded-pixel hashes identify identical images even when filenames differ.
         with Image.open(p) as im:
             digest = hashlib.sha256(np.asarray(im.convert("RGB")).tobytes()).hexdigest()
         if digest in seen:
             continue
         seen[digest] = str(p)
         x, y, w, h = np.asarray(r["faceRect"], float).ravel()
-        # MATLAB rectangles use 1-based coordinates; PIL uses 0-based coordinates.
+        # Face rectangles are converted from MATLAB coordinates to PIL coordinates.
         rows.append(
             dict(
                 path=os.path.relpath(p, out.parent),
@@ -113,8 +117,8 @@ def prepare_sof(image_root, metadata_mat, out, seed=42, gap=1, part="2"):
                 g["split"] = split
                 chunks.append(g)
     manifest = pd.concat(chunks, ignore_index=True)
-    # Suppress cross-condition immediate neighbors in different partitions too.
-    # Remove training first, then validation, preserving held-out test observations.
+    # Sequence neighbors across illumination groups are also excluded across partitions.
+    # Earlier partitions lose conflicting frames, preserving held-out test samples.
     rank = {"train": 0, "validation": 1, "test": 2}
     drop = set()
     for _, g in manifest.groupby("user_id"):
@@ -138,6 +142,7 @@ def prepare_sof(image_root, metadata_mat, out, seed=42, gap=1, part="2"):
 
 
 def load_faces(manifest_path):
+    """Load manifest-defined face crops, reject duplicate images, and return aligned features."""
     path = Path(manifest_path).resolve()
     df = pd.read_csv(path, dtype={"user_id": str, "group_id": str})
     required = {
@@ -195,6 +200,7 @@ def load_faces(manifest_path):
 
 
 def load_cmu(path):
+    """Load CMU timing features and assign training, validation, and test sessions."""
     df = pd.read_csv(path, dtype={"subject": str})
     required = {"subject", "sessionIndex", "rep"}
     if required - set(df):
@@ -220,7 +226,10 @@ def load_cmu(path):
 
 
 def timing_dependencies(cols):
-    """Match full key names: the official CMU key 'Shift.r' contains a dot."""
+    """Yield column indices satisfying DD = H + UD for each timing digraph.
+
+    Full key names are matched because the CMU key 'Shift.r' contains a dot.
+    """
     keys = [c[2:] for c in cols if c.startswith("H.")]
     for dd in (c for c in cols if c.startswith("DD.")):
         matches = [(a, b) for a in keys for b in keys if dd == "DD." + a + "." + b]
@@ -234,6 +243,7 @@ def timing_dependencies(cols):
 
 
 def validate_timings(X, cols):
+    """Check nonnegative H and DD intervals and the DD = H + UD timing relationship."""
     for c in cols:
         if c.startswith(("H.", "DD.")) and np.any(X[:, cols.index(c)] < 0):
             raise ValueError(f"Negative hold/down-down timing: {c}")
@@ -243,11 +253,13 @@ def validate_timings(X, cols):
 
 
 def degrade_timings(X, cols, noise_ms, rng):
-    """Perturb hold and keydown intervals; rebuild dependent UD = DD - H.
+    """Return timing features with Gaussian noise applied to H and DD intervals.
 
-    Noise is in seconds (ms/1000). Positive intervals clipped at 1 ms. Negative
-    UD is legitimate overlapping typing and is retained. Same random draw scaled
-    by severity in the experiment driver, creating paired severity conditions.
+    The noise standard deviation is converted from milliseconds to seconds.
+    Perturbed H and DD intervals are bounded below by one millisecond, and UD
+    intervals are reconstructed as DD minus H. Negative UD intervals are retained
+    because overlapping keystrokes are valid. The experiment driver reuses random
+    draws across noise levels to maintain paired comparisons.
     """
     if noise_ms == 0:
         return X.copy()
@@ -262,6 +274,12 @@ def degrade_timings(X, cols, noise_ms, rng):
 
 
 def user_mapping(faces, keys, n_users, seed):
+    """Create an artificial one-to-one mapping between eligible SoF and CMU users.
+
+    Eligible face users have both illumination conditions in every partition and
+    at least eight training samples. Eligible CMU users have all three partitions.
+    Pseudo-user IDs identify cross-dataset pairings, not shared real-world identities.
+    """
     eligible = []
     for u, g in faces.groupby("user_id"):
         counts = g.groupby(["split", "illumination"]).size()
@@ -277,7 +295,7 @@ def user_mapping(faces, keys, n_users, seed):
             f"Only {n} usable users. Need >=3 with both lighting labels in each face split. Inspect manifest counts."
         )
     rng = np.random.default_rng(seed)
-    # Keep face cohort fixed across seeds; vary artificial CMU subset and identity mapping.
+    # Seeds retain the face cohort while varying CMU selection and artificial identity pairing.
     eligible = sorted(eligible)[:n]
     chosen = rng.choice(sorted(kusers), n, replace=False)
     return pd.DataFrame(

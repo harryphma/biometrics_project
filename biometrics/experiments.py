@@ -1,4 +1,4 @@
-"""Connected RQ1 -> RQ2 -> RQ3 experiments, selected only on validation data."""
+"""RQ1 classifier comparisons, RQ2 fixed fusion, and RQ3 quality-adaptive fusion."""
 
 from pathlib import Path
 import json
@@ -12,6 +12,7 @@ from .evaluation import eer, far_threshold, rates_at, measure, plot_hw3
 
 
 def json_write(path, data):
+    """Write indented JSON, converting NumPy scalar values to native Python values."""
     Path(path).write_text(
         json.dumps(
             data, indent=2, default=lambda x: x.item() if hasattr(x, "item") else str(x)
@@ -20,11 +21,13 @@ def json_write(path, data):
 
 
 def flatten_scores(matrix, actual):
+    """Flatten sample-by-user scores and label matching actual and claimed IDs as genuine."""
     claims = np.broadcast_to(np.arange(matrix.shape[1]), matrix.shape)
     return (claims == np.asarray(actual)[:, None]).astype(int).ravel(), matrix.ravel()
 
 
 def thresholds(y, s, cfg):
+    """Derive EER and target-FAR operating thresholds from validation trials."""
     return {
         "val_eer": eer(y, s, cfg["num_thresholds"])[1],
         "target": far_threshold(y, s, cfg["target_far"]),
@@ -32,6 +35,7 @@ def thresholds(y, s, cfg):
 
 
 def mapped_data(frame, X, mapping, source, column, quality=None):
+    """Filter a modality to mapped users while preserving feature and metadata alignment."""
     lookup = dict(zip(mapping[source], mapping.pseudo_user))
     mask = frame[column].isin(lookup)
     f = frame.loc[mask].copy().reset_index(drop=True)
@@ -44,16 +48,17 @@ def mapped_data(frame, X, mapping, source, column, quality=None):
 
 
 def indices(data, split):
+    """Return feature-row indices belonging to the requested sample partition."""
     return np.flatnonzero(data["df"].split.to_numpy() == split)
 
 
 def make_pairs(F, K, split, seed, max_pairs, balanced=False):
-    """Same actual pseudo-user supplies BOTH modalities, including impostor trials.
+    """Pair face and keystroke observations from the same pseudo-user and partition.
 
-    One row per paired observation, later evaluated against every claimed user.
-    No Cartesian product inflation and no sampling with replacement within a pool.
-    RQ3 balances lighting per identity, reusing the same keystroke probes for both
-    lighting conditions, so changes are paired and identity mix is held constant.
+    Samples are drawn without replacement within each pool. Each pair is later
+    compared with every claimed user to form genuine and impostor attempts.
+    Balanced sampling uses equal good- and poor-illumination counts per user and
+    reuses keystroke probes across illumination groups for paired comparisons.
     """
     rng = np.random.default_rng(seed)
     records = []
@@ -102,6 +107,7 @@ def make_pairs(F, K, split, seed, max_pairs, balanced=False):
 
 
 def trial_frame(pairs, face_scores, key_scores, qf, qk, n_users):
+    """Expand observation pairs into claimed-user trials with labels, scores, and qualities."""
     rows = pairs.loc[pairs.index.repeat(n_users)].reset_index(drop=True)
     rows["claimed_user"] = np.tile(np.arange(n_users), len(pairs))
     rows["label"] = (rows.actual_user == rows.claimed_user).astype(int)
@@ -129,6 +135,11 @@ def save_result(
     plot=False,
     locked=None,
 ):
+    """Evaluate and save one comparison using validation-derived or supplied thresholds.
+
+    Outputs include pooled metrics, labeled trial scores, per-user metrics,
+    optional HW3 plots, and the operating thresholds used for testing.
+    """
     yv = validation.label.to_numpy()
     yt = test.label.to_numpy()
     th = thresholds(yv, val_scores, cfg) if locked is None else locked
@@ -158,7 +169,7 @@ def save_result(
         t.to_csv(target / f"{split}_trials.csv.gz", index=False, compression="gzip")
         np.savetxt(target / f"{split}_genuine.txt", np.asarray(scores)[t.label == 1])
         np.savetxt(target / f"{split}_impostor.txt", np.asarray(scores)[t.label == 0])
-    # Per-claimed-user errors prevent large pools from hiding individual failures.
+    # Per-user metrics complement pooled errors with an equally weighted mean user EER.
     user_rows = []
     for u, g in test.groupby("claimed_user"):
         idx = g.index.to_numpy()
@@ -174,6 +185,7 @@ def save_result(
 
 
 def rq1(F, K, cfg, out, seed):
+    """Evaluate configured classifiers per modality and select models by validation EER."""
     chosen = {}
     rows = []
     selection = {}
@@ -196,7 +208,7 @@ def rq1(F, K, cfg, out, seed):
             candidates.append(
                 {"modality": modality, "model": name, "validation_EER": ve}
             )
-            # Strictly validation selection; test scores below are never consulted.
+            # Model selection depends only on validation EER; test metrics are recorded separately.
             if best is None or ve < best[0]:
                 best = (ve, model, name)
             th = thresholds(yv, sv, cfg)
@@ -256,10 +268,12 @@ def rq1(F, K, cfg, out, seed):
 def paired_bootstrap_difference(
     fixed, adaptive, threshold_fixed, threshold_adaptive, path, seed, n_boot=1000
 ):
-    """Cluster bootstrap claimed identities (not falsely independent comparisons).
+    """Estimate adaptive-minus-fixed FAR and FRR differences by resampling claimed users.
 
-    Reports adaptive-minus-fixed FAR/FRR at frozen operational thresholds.
-    Few users => exploratory intervals; repeated mappings are not new people.
+    Each method uses its frozen operational threshold. Claimed users are sampled
+    with replacement, preserving paired method differences within each user.
+    The resulting intervals are exploratory because probes are shared across
+    claims and repeated identity mappings reuse source participants.
     """
     per = []
     for u, g in fixed.groupby("claimed_user"):
@@ -282,6 +296,13 @@ def paired_bootstrap_difference(
 
 
 def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
+    """Execute RQ1, RQ2, and RQ3 for one reproducible artificial identity mapping.
+
+    RQ1 selects modality classifiers, RQ2 compares fixed score weights, and RQ3
+    compares fixed and adaptive fusion across illumination and timing-noise
+    conditions. Parameter selection uses validation data; test data provide
+    the reported performance estimates.
+    """
     out = root / f"seed_{seed}"
     out.mkdir(parents=True, exist_ok=True)
     mapping = user_mapping(face_df, key_df, cfg["n_users"], seed)
@@ -300,7 +321,7 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
     qf = quality.face(F["q"])
     qk = quality.key(K["X"])
     chosen, rows = rq1(F, K, cfg, out, seed)
-    # Persist fitted preprocessing + per-claimed-user models, for reproducibility.
+    # Stored models include training scalers, validation normalizers, and identity mappings.
     joblib.dump(
         {"models": chosen, "quality": quality, "mapping": mapping},
         out / "fitted_models.joblib",
@@ -336,7 +357,7 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
             plot=w in (0, 0.5, 1, best_w),
         )
         rows.append(row)
-    # RQ3: balanced identity and lighting pools, identical keys and noise realizations.
+    # RQ3 holds the identity mix and keystroke probes constant across illumination groups.
     stress = {}
     condition_scores = {}
     for split in ("validation", "test"):
@@ -345,7 +366,7 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
         )
         stress[split] = {}
         for noise in cfg["timing_noise_ms"]:
-            # Reset RNG per level -> identical standard-normal draw scaled by ms.
+            # Reinitializing the generator pairs random perturbations across noise levels.
             degraded = degrade_timings(
                 K["X"], key_cols, noise, np.random.default_rng(seed + 300)
             )
@@ -356,9 +377,9 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
                 trial = trial_frame(pp, fs, km, qf, kq, n)
                 trial["timing_noise_ms"] = noise
                 stress[split][(light, noise)] = trial
-    # Choose adaptive strength only from validation stress data. The prior is the
-    # RQ2 selected fixed weight. Power zero is excluded: adaptive must be tested
-    # even when it does worse; results never assume a performance improvement.
+    # Adaptive power minimizes mean validation EER across stress conditions.
+    # The prior face weight is the RQ2 validation-selected fixed weight.
+    # Configured positive powers evaluate adaptation even when performance declines.
     adaptive_search = []
     for power in cfg["adaptive_powers"]:
         values = []
@@ -375,8 +396,8 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
     pd.DataFrame(adaptive_search).to_csv(
         out / "adaptive_validation_search.csv", index=False
     )
-    # Freeze one threshold per method using unperturbed RQ2 validation pool. Do not
-    # retune the FAR threshold on each stress condition or on test observations.
+    # Each method retains thresholds calibrated on the unperturbed RQ2 validation pool.
+    # The same thresholds apply to every RQ3 test condition.
     baseline_vs = best_w * v.face_score + (1 - best_w) * v.key_score
     wf = adaptive_weight(v.face_quality, v.key_quality, best_w, best_power)
     baseline_as = wf * v.face_score + (1 - wf) * v.key_score
@@ -459,6 +480,7 @@ def run_seed(face_df, face_X, face_q, key_df, key_X, key_cols, cfg, seed, root):
 
 
 def run(cfg):
+    """Load datasets, execute configured seeds, and save combined metrics and summaries."""
     root = Path(cfg["output"]).resolve()
     if root.exists() and any(root.iterdir()):
         raise ValueError(

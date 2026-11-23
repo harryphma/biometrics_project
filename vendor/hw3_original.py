@@ -1,21 +1,21 @@
+"""Bundled HW3 evaluator and its standalone synthetic-score demonstration."""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn import metrics
 
 
 class Evaluator:
-    """
-    A class for evaluating a biometric system's performance.
+    """Evaluate genuine and impostor similarity scores across a fixed threshold grid.
     """
 
-    def __init__(self, 
-                 num_thresholds, 
-                 genuine_scores, 
-                 impostor_scores, 
-                 plot_title, 
+    def __init__(self,
+                 num_thresholds,
+                 genuine_scores,
+                 impostor_scores,
+                 plot_title,
                  epsilon=1e-12):
-        """
-        Initialize the Evaluator object.
+        """Store score classes and construct evenly spaced thresholds from -0.1 to 1.1.
 
         Parameters:
         - num_thresholds (int): Number of thresholds to evaluate.
@@ -32,8 +32,7 @@ class Evaluator:
         self.epsilon = epsilon
 
     def get_dprime(self):
-        """
-        Calculate the d' (d-prime) metric.
+        """Compute absolute mean score separation divided by pooled standard deviation.
 
         Returns:
         - float: The calculated d' value.
@@ -44,12 +43,11 @@ class Evaluator:
         return x / (y + self.epsilon)
 
     def plot_score_distribution(self):
-        """
-        Plot the distribution of genuine and impostor scores.
+        """Save and display genuine and impostor score histograms with d-prime.
         """
         plt.figure()
-        
-        # Plot the histogram for genuine scores
+
+        # Genuine and impostor histograms share bin boundaries for comparison.
         plt.hist(
             self.genuine_scores,
             bins=np.linspace(0, 1, 31),
@@ -57,10 +55,10 @@ class Evaluator:
             lw=1.5,
             histtype='step',
             hatch='//',
-            label='Genuine Scores' 
+            label='Genuine Scores'
         )
-        
-        # Plot the histogram for impostor scores
+
+        # Impostor scores are shown separately from genuine scores.
         plt.hist(
             self.impostor_scores,
             bins=np.linspace(0, 1, 31),
@@ -68,271 +66,270 @@ class Evaluator:
             lw=1.5,
             histtype='step',
             hatch='\\',
-            label='Impostor Scores' 
+            label='Impostor Scores'
         )
-        
-        # Set the x-axis limit to ensure the histogram fits within the correct range
+
+        # Axis limits include a margin around the normalized score range.
         plt.xlim([-0.05, 1.05])
-        
-        # Add grid lines for better readability
+
+        # Grid lines support comparisons across error rates.
         plt.grid(color='gray', linestyle='--', linewidth=0.5)
-        
-        # Step 6: Add legend to the upper left corner with a specified font size
+
+        # The legend identifies genuine and impostor score distributions.
         plt.legend(
             loc='upper left',
             fontsize=10
         )
-        
-        # Step 7: Set x and y-axis labels with specified font size and weight
+
+        # Axis labels identify matching scores and observation counts.
         plt.xlabel(
             'Matching Score',
             fontsize=12,
             weight='bold'
         )
-        
+
         plt.ylabel(
             'Frequency',
             fontsize=12,
             weight='bold'
         )
-        
-        # Step 8: Remove the top and right spines for a cleaner appearance
+
+        # Only the left and bottom axes remain visible.
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
-        
-        # Step 9: Set font size for x and y-axis ticks
+
+        # Tick labels use a consistent size across evaluation plots.
         plt.xticks(
             fontsize=10
         )
-        
+
         plt.yticks(
             fontsize=10
         )
-        
-        # Step 10: Add a title to the plot with d-prime value and system title
-        plt.title('Score Distribution Plot\nd-prime= %.2f\nSystem %s' % 
-                  (self.get_dprime(), 
+
+        # The title records score separation and the evaluated system.
+        plt.title('Score Distribution Plot\nd-prime= %.2f\nSystem %s' %
+                  (self.get_dprime(),
                    self.plot_title),
                   fontsize=15,
                   weight='bold')
-        
-        # Save the figure before displaying it
+
+        # The score-distribution figure is saved at publication resolution.
         plt.savefig('score_distribution_plot_(%s).png' % self.plot_title, dpi=300, bbox_inches="tight")
-        
-        # Display the plot after saving
+
+        # Display uses the active Matplotlib backend.
         plt.show()
-        
-        # Close the figure to free up resources
+
+        # The figure is closed after output to release plotting resources.
         plt.close()
 
         return
 
     def get_EER(self, FPR, FNR):
-        """
-        Calculate the Equal Error Rate (EER).
-    
+        """Approximate EER at the evaluated threshold with the smallest FAR/FRR difference.
+
         Parameters:
         - FPR (list or array-like): False Positive Rate values.
         - FNR (list or array-like): False Negative Rate values.
-    
+
         Returns:
         - tuple: Approximate EER and its evaluated threshold.
         """
         EER = 0
-        
-        # Use the evaluated threshold where FPR and FNR are closest.
-        # With a finite threshold grid, their average approximates the EER.
+
+        # The nearest FAR/FRR crossing on the evaluated grid defines the EER estimate.
+        # The two error rates are averaged because the finite grid may not contain equality.
         index = np.argmin(np.abs(np.array(FPR) - np.array(FNR)))
         EER = (FPR[index] + FNR[index]) / 2
         EER_threshold = self.thresholds[index]
-        
+
         return EER, EER_threshold
 
     def plot_det_curve(self, FPR, FNR):
-        """
-        Plot the Detection Error Tradeoff (DET) curve.
+        """Save and display the DET curve on linear error-rate axes.
         Parameters:
          - FPR (list or array-like): False Positive Rate values.
          - FNR (list or array-like): False Negative Rate values.
         """
-        
-        # Calculate the Equal Error Rate (EER) using the get_EER method
+
+        # The HW3 EER estimate and threshold identify the annotated operating point.
         EER, EER_threshold = self.get_EER(FPR, FNR)
-        
-        # Create a new figure for plotting
+
+        # The DET curve uses a separate figure.
         plt.figure()
-        
-        # Plot the Detection Error Tradeoff Curve
+
+        # The DET curve shows false rejection against false acceptance on linear axes.
         plt.plot(
             FPR, FNR,
             lw=2,
             color='blue'
         )
-        
-        # Add a text annotation for the EER point on the curve
-        # Plot the diagonal line representing equal false-positive and false-negative rates
-        # Scatter plot to highlight the EER point on the curve
+
+        # The diagonal marks equal error rates; the marker identifies the sampled crossing.
+
+
 
         plt.text(EER + 0.07, EER + 0.07, "EER", style='italic', fontsize=12,
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 10})
         plt.plot([0, 1], [0, 1], '--', lw=0.5, color='black')
         index = np.argmin(np.abs(self.thresholds - EER_threshold))
         plt.scatter([FPR[index]], [FNR[index]], c="black", s=100)
-        
-        # Set the x and y-axis limits to ensure the plot fits within the range 
+
+        # Both axes cover the full error-rate range with a small margin.
         plt.xlim([-0.05, 1.05])
         plt.ylim([-0.05, 1.05])
-        
-        # Add grid lines for better readability
+
+        # Grid lines support comparisons across error rates.
         plt.grid(
             color='gray',
             linestyle='--',
             linewidth=0.5
         )
-        
-        # Remove the top and right spines for a cleaner appearance
+
+        # Only the left and bottom axes remain visible.
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
-        
-        # Set x and y-axis labels with specified font size and weight
+
+        # Axis labels identify false acceptance and false rejection rates.
         plt.xlabel(
             'False Pos. Rate',
             fontsize=12,
             weight='bold'
         )
-        
+
         plt.ylabel(
             'False Neg. Rate',
             fontsize=12,
             weight='bold'
         )
-        
-        # Step 11: Add a title to the plot with EER value and system title
+
+        # The title records the EER estimate, sampled threshold, and system.
         plt.title(
             'Detection Error Tradeoff Curve \nEER = %.5f at t=%.3f\nSystem %s' %
             (EER, EER_threshold, self.plot_title),
             fontsize=15,
-            weight='bold' 
+            weight='bold'
         )
-        
-        # Step 12: Set font size for x and y-axis ticks
+
+        # Tick labels match the other evaluation figures.
         plt.xticks(
             fontsize=10
         )
-        
+
         plt.yticks(
             fontsize=10
         )
-        
-        # Step 13: Save the plot as an image file
+
+        # The DET figure is saved at publication resolution.
         plt.savefig(
             'det_curve_(%s).png' % self.plot_title, dpi=300, bbox_inches="tight"
         )
-        
-        # Step 14: Display the plot
+
+        # Display uses the active Matplotlib backend.
         plt.show()
-        
-        # Step 15: Close the plot to free up resources
+
+        # The figure is closed after output to release plotting resources.
         plt.close()
-    
+
         return
 
     def plot_roc_curve(self, FPR, TPR):
-        """
-        Plot the Receiver Operating Characteristic (ROC) curve.
+        """Save and display genuine acceptance against false acceptance.
         Parameters:
         - FPR (list or array-like): False Positive Rate values.
         - TPR (list or array-like): True Positive Rate values.
         """
-        
-        # Create a new figure for the ROC curve
+
+        # The ROC curve uses a separate figure.
         plt.figure()
 
-        # Plot the ROC curve using FPR and TPR with specified attributes
+        # The ROC curve shows genuine acceptance against false acceptance.
         plt.plot(FPR, TPR, lw=2, color='blue')
 
-        # Set x and y axis limits, add grid, and remove top and right spines
+        # Axis limits and styling match the DET figure for comparison.
         plt.xlim([-0.05, 1.05])
         plt.ylim([-0.05, 1.05])
         plt.grid(color='gray', linestyle='--', linewidth=0.5)
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
 
-        # Set labels for x and y axes, and add a title
+        # Labels identify acceptance rates and the evaluated system.
         plt.xlabel('False Pos. Rate', fontsize=12, weight='bold')
         plt.ylabel('True Pos. Rate', fontsize=12, weight='bold')
         plt.title('Receiver Operating Characteristic Curve\nSystem %s' %
                   self.plot_title, fontsize=15, weight='bold')
 
-        # Set font sizes for ticks, x and y labels
+        # Tick labels match the other evaluation figures.
         plt.xticks(fontsize=10)
         plt.yticks(fontsize=10)
 
-        # Save the plot as a PNG file and display it
+        # The ROC figure is saved before display through the active backend.
         plt.savefig('roc_curve_(%s).png' % self.plot_title, dpi=300, bbox_inches="tight")
         plt.show()
 
-        # Close the figure to free up resources
+        # The figure is closed after output to release plotting resources.
         plt.close()
- 
+
         return
 
     def compute_rates(self):
-        # Initialize lists for False Positive Rate (FPR), False Negative Rate (FNR), and True Positive Rate (TPR)
+        """Return FAR, FRR, and TPR arrays for the configured similarity thresholds."""
+        # Rate arrays follow the order of the evaluated thresholds.
         FPR, FNR, TPR = [], [], []
-        # Iterate through threshold values and calculate TP, FP, TN, and FN for each threshold
+        # Each threshold partitions genuine and impostor scores into acceptance counts.
         for threshold in self.thresholds:
-            # Accept a match when its similarity score is >= the threshold.
+            # Scores equal to or above the threshold are accepted as matches.
             TP = np.sum(self.genuine_scores >= threshold)
             FN = np.sum(self.genuine_scores < threshold)
             FP = np.sum(self.impostor_scores >= threshold)
             TN = np.sum(self.impostor_scores < threshold)
 
-            # Calculate FPR, FNR, and TPR based on the obtained values
-            # Append calculated rates to their respective lists
+            # False acceptance, false rejection, and genuine acceptance use class-specific totals.
+
             FPR.append(FP / (FP + TN))
             FNR.append(FN / (TP + FN))
             TPR.append(TP / (TP + FN))
 
-        # Return the lists of FPR, FNR, and TPR
+        # FPR and FNR correspond to biometric FAR and FRR, respectively.
         return FPR, FNR, TPR
 
 def main():
-    
+    """Run the standalone synthetic-score demonstration, separate from RQ experiments."""
+
     seed = 42
     rng = np.random.default_rng(seed=seed)
 
-    # Name the systems A, B, and C
+    # The standalone HW3 demonstration evaluates three synthetic score systems.
     systems = ['A', 'B', 'C']
-    
+
     for system in systems:
-        # Randomly determine the number of genuine and impostor scores
+        # Seeded draws set the genuine and impostor sample counts.
         gSize = rng.integers(5000, 10000)
         iSize = rng.integers(15000, 20000)
-        
-        # Randomly determine how many distributions to mix
+
+        # Each score class combines a randomly selected number of Gaussian components.
         gDists = rng.integers(1, 10)
         iDists = rng.integers(1, 10)
-    
-        # Generate genuine scores with multiple distribution peaks
+
+        # Genuine scores form a clipped Gaussian mixture in [0, 1].
         genuine_scores = []
-        for gDist in range(gDists):  # start from 1 to gDists-1
+        for gDist in range(gDists):  # One component is generated for each index from zero to gDists minus one.
             size = int(gSize / gDists)
             loc = (1.00 - 0.4) * rng.random() + 0.4
             scale = (0.3 - 0.05) * rng.random() + 0.05
             g_scores = np.clip(rng.normal(loc=loc, scale=scale, size=size), 0, 1)
             genuine_scores = np.concatenate([genuine_scores, g_scores])
-        
-        # Generate impostor scores with multiple distributions
+
+        # Impostor scores form a separate clipped Gaussian mixture in [0, 1].
         impostor_scores = []
-        for iDist in range(iDists):  # start from 1 to iDists-1
+        for iDist in range(iDists):  # One component is generated for each index from zero to iDists minus one.
             size = int(iSize / iDists)
             loc = (0.6 - 0.0) * rng.random() + 0.0
             scale = (0.3 - 0.05) * rng.random() + 0.05
             i_scores = np.clip(rng.normal(loc=loc, scale=scale, size=size), 0, 1)
             impostor_scores = np.concatenate([impostor_scores, i_scores])
-        
-        # Creating an instance of the Evaluator class
+
+        # The demonstration passes synthetic scores to the same evaluation interface.
         evaluator = Evaluator(
             epsilon=1e-12,
             num_thresholds=500,
@@ -340,24 +337,24 @@ def main():
             impostor_scores=impostor_scores,
             plot_title="%s" % system
         )
-        
-        # Generate the FPR, FNR, and TPR using 500 threshold values equally spaced
-        # between -0.1 and 1.1.
+
+        # The demonstration evaluates 500 thresholds between -0.1 and 1.1.
+
         FPR, FNR, TPR = evaluator.compute_rates()
-    
-        # Plot the score distribution. Include the d-prime value in the plot’s 
-        # title. Your genuine scores should be green, and your impostor scores 
-        # should be red. Set the x axis limits from -0.05 to 1.05
+
+        # Score histograms include d-prime and distinguish the two score classes.
+
+
         evaluator.plot_score_distribution()
-                
-        # Plot the DET curve and include the EER in the plot’s title. 
-        # Set the x and y axes limits from -0.05 to 1.05.
+
+        # The DET figure reports EER at the nearest sampled crossing.
+
         evaluator.plot_det_curve(FPR, FNR)
-        
-        # Plot the ROC curve. Set the x and y axes limits from -0.05 to 1.05.
+
+        # The ROC figure summarizes genuine acceptance across false-acceptance rates.
         evaluator.plot_roc_curve(FPR, TPR)
-        
-        
+
+
 if __name__ == "__main__":
     main()
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Command-line entry point. Run `python main.py --help`."""
+"""Command-line interface for SoF manifest preparation and biometric experiments."""
 
 import argparse
 import json
@@ -9,6 +9,7 @@ from biometrics.experiments import run
 
 
 def main():
+    """Parse command-line options and dispatch manifest preparation or configured experiments."""
     p = argparse.ArgumentParser(
         description="CAP4103 SoF + CMU biometric verification experiments"
     )
